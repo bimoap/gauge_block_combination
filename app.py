@@ -4,28 +4,25 @@ import itertools
 # ==========================================
 # Gauge Block Set Definitions
 # ==========================================
-# Note: Standard arrays are provided based on common manufacturing specs. 
-# You can adjust the arrays below to match the exact blocks in your physical boxes.
-
 GAUGE_SETS = {
     "87-piece metric gauge block set (Grade 1)": [
-        *[round(1.001 + i * 0.001, 3) for i in range(9)],  # 1.001 to 1.009
-        *[round(1.01 + i * 0.01, 2) for i in range(49)],   # 1.01 to 1.49
-        *[round(0.5 + i * 0.5, 1) for i in range(19)],     # 0.5 to 9.5
-        *[float(10 + i * 10) for i in range(10)]           # 10 to 100
+        *[round(1.001 + i * 0.001, 3) for i in range(9)],  
+        *[round(1.01 + i * 0.01, 2) for i in range(49)],   
+        *[round(0.5 + i * 0.5, 1) for i in range(19)],     
+        *[float(10 + i * 10) for i in range(10)]           
     ],
     "83-piece metric gauge block set (Grade 2)": [
         1.005,
-        *[round(1.01 + i * 0.01, 2) for i in range(49)],   # 1.01 to 1.49
-        *[round(0.5 + i * 0.5, 1) for i in range(19)],     # 0.5 to 9.5
-        *[float(10 + i * 10) for i in range(10)],          # 10 to 100
-        1.0, 1.001, 1.002, 1.003, 1.004, 1.006, 1.007, 1.008, 1.009 # standard variations
+        *[round(1.01 + i * 0.01, 2) for i in range(49)],   
+        *[round(0.5 + i * 0.5, 1) for i in range(19)],     
+        *[float(10 + i * 10) for i in range(10)],          
+        1.0, 1.001, 1.002, 1.003, 1.004, 1.006, 1.007, 1.008, 1.009 
     ],
     "47-piece Ceramic Set (grade 0)": [
         1.005,
-        *[round(1.01 + i * 0.01, 2) for i in range(9)],    # 1.01 to 1.09
-        *[round(1.1 + i * 0.1, 1) for i in range(9)],      # 1.1 to 1.9
-        *[float(1 + i) for i in range(24)],                # 1 to 24
+        *[round(1.01 + i * 0.01, 2) for i in range(9)],    
+        *[round(1.1 + i * 0.1, 1) for i in range(9)],      
+        *[float(1 + i) for i in range(24)],                
         25.0, 50.0, 75.0, 100.0
     ],
     "76-piece": [
@@ -97,6 +94,17 @@ with st.sidebar:
     selected_set = st.selectbox("1. Select Gauge Block Set", options=list(GAUGE_SETS.keys()))
     
     st.markdown("---")
+    st.header("Missing Blocks Management")
+    num_missing = st.number_input("How many blocks are missing from the set?", min_value=0, max_value=20, value=0, step=1)
+    
+    missing_blocks_list = []
+    if num_missing > 0:
+        st.write("Enter the sizes of the missing blocks:")
+        for i in range(num_missing):
+            missing_val = st.number_input(f"Missing Block {i+1} (mm)", min_value=0.000, max_value=200.000, value=1.000, step=0.001, format="%.3f", key=f"missing_{i}")
+            missing_blocks_list.append(missing_val)
+            
+    st.markdown("---")
     st.markdown("App developed & maintained by: **Bimo**")
 
 st.markdown(f"**Active Pool:** {selected_set}")
@@ -111,6 +119,20 @@ if st.button("Calculate Combinations", type="primary"):
     
     # Load a fresh copy of the selected physical block set
     current_pool = GAUGE_SETS[selected_set].copy()
+    
+    # Process and remove missing blocks from the pool
+    if missing_blocks_list:
+        blocks_removed = 0
+        for missing_size in missing_blocks_list:
+            missing_u = int(round(missing_size * 1000))
+            # Find and remove the block by matching the integer micron value
+            for b in current_pool:
+                if int(round(b * 1000)) == missing_u:
+                    current_pool.remove(b)
+                    blocks_removed += 1
+                    break # Only remove one instance
+        if blocks_removed > 0:
+            st.info(f"Ignored {blocks_removed} missing block(s) from the calculation pool.")
     
     results = []
     failed = False
@@ -127,7 +149,7 @@ if st.button("Calculate Combinations", type="primary"):
                     current_pool.remove(block)
             else:
                 failed = True
-                st.error(f"❌ Could not find a valid combination for Set {i + 1} using the remaining blocks in the {selected_set}.")
+                st.error(f"❌ Could not find a valid combination for Set {i + 1} using the available blocks.")
                 break
                 
     # Display Results
