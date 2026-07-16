@@ -2,13 +2,13 @@ import streamlit as st
 import itertools
 import json
 import os
+from fpdf import FPDF
 
 # ==========================================
 # File Storage Setup
 # ==========================================
 SETTINGS_FILE = "gauge_app_settings.json"
 
-# Default settings if the file doesn't exist yet
 DEFAULT_SETTINGS = {
     "selected_set": "87-piece metric gauge block set (Grade 1)",
     "num_missing": 0,
@@ -29,6 +29,50 @@ def save_settings(settings_dict):
     """Save settings to the JSON file."""
     with open(SETTINGS_FILE, "w") as f:
         json.dump(settings_dict, f)
+
+# ==========================================
+# Export Functions
+# ==========================================
+def generate_csv(target, results):
+    """Generates a CSV string of the calculation results."""
+    csv_data = "Target Size (mm),Set Number,Total Verification (mm),Blocks Used (mm)\n"
+    for idx, combo in enumerate(results):
+        combo_str = " + ".join([f"{b:.3f}" for b in combo])
+        total_size = sum(combo)
+        # Using quotes around the combo string to prevent commas from breaking the CSV columns
+        csv_data += f"{target:.3f},{idx + 1},{total_size:.3f},\"{combo_str}\"\n"
+    return csv_data.encode('utf-8')
+
+def generate_pdf(target, results, selected_set):
+    """Generates a PDF document of the calculation results."""
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, txt="Gauge Block Setup Report", ln=True, align='C')
+    
+    # Metadata
+    pdf.set_font("Arial", '', 12)
+    pdf.cell(0, 10, txt=f"Target Size: {target:.3f} mm", ln=True)
+    pdf.cell(0, 10, txt=f"Equipment: {selected_set}", ln=True)
+    pdf.ln(5)
+
+    # Results
+    for idx, combo in enumerate(results):
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 10, txt=f"Set {idx + 1} (Total Check: {sum(combo):.3f} mm)", ln=True)
+        
+        pdf.set_font("Arial", '', 12)
+        combo_str = " + ".join([f"{b:.3f}" for b in combo])
+        pdf.cell(0, 8, txt=f"Combination: {combo_str}", ln=True)
+        
+        for block in sorted(combo):
+            pdf.cell(0, 6, txt=f"  - {block:.3f} mm", ln=True)
+        pdf.ln(5)
+    
+    # Output to string/bytes for download
+    return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
 # Gauge Block Set Definitions
@@ -100,10 +144,8 @@ def find_combination(target, available_blocks, max_blocks=5):
     target_u = int(round(target * 1000))
     blocks_u = [int(round(b * 1000)) for b in available_blocks]
     
-    # Sort descending to prioritize larger blocks
     blocks_u.sort(reverse=True)
 
-    # Iterative deepening to guarantee the solution with the minimum number of blocks
     for r in range(1, max_blocks + 1):
         for combo in itertools.combinations(blocks_u, r):
             if sum(combo) == target_u:
@@ -116,7 +158,6 @@ def find_combination(target, available_blocks, max_blocks=5):
 # ==========================================
 st.set_page_config(page_title="Gauge Block Calculator", layout="centered")
 
-# Load settings at the start of the UI build
 saved_settings = load_settings()
 
 st.title("Gauge Block Combination Calculator")
@@ -124,7 +165,6 @@ st.title("Gauge Block Combination Calculator")
 with st.sidebar:
     st.header("Settings")
     
-    # Use the saved setting as the default index
     set_options = list(GAUGE_SETS.keys())
     default_set_index = set_options.index(saved_settings["selected_set"]) if saved_settings["selected_set"] in set_options else 0
     
@@ -133,20 +173,17 @@ with st.sidebar:
     st.markdown("---")
     st.header("Missing Blocks Management")
     
-    # Use the saved number of missing blocks as the default
     num_missing = st.number_input("How many blocks are missing?", min_value=0, max_value=20, value=saved_settings["num_missing"], step=1)
     
     missing_blocks_list = []
     if num_missing > 0:
         st.write("Enter the sizes of the missing blocks:")
         for i in range(num_missing):
-            # If we have a saved block size for this index, use it. Otherwise, default to 1.000
             saved_val = saved_settings["missing_blocks"][i] if i < len(saved_settings["missing_blocks"]) else 1.000
             
             missing_val = st.number_input(f"Missing Block {i+1} (mm)", min_value=0.000, max_value=200.000, value=float(saved_val), step=0.001, format="%.3f", key=f"missing_{i}")
             missing_blocks_list.append(missing_val)
     
-    # Save Button to lock in the current settings
     if st.button("💾 Save Settings as Default"):
         new_settings = {
             "selected_set": selected_set,
@@ -169,10 +206,8 @@ with col2:
 
 if st.button("Calculate Combinations", type="primary"):
     
-    # Load a fresh copy of the selected physical block set
     current_pool = GAUGE_SETS[selected_set].copy()
     
-    # Process and remove missing blocks from the pool
     if missing_blocks_list:
         blocks_removed = 0
         for missing_size in missing_blocks_list:
@@ -190,12 +225,10 @@ if st.button("Calculate Combinations", type="primary"):
     
     with st.spinner('Calculating optimal combinations...'):
         for i in range(num_sets):
-            # Find a combo from the remaining available blocks
             combo = find_combination(target_size, current_pool)
             
             if combo:
                 results.append(combo)
-                # Remove the used blocks from the pool so they can't be used in the next set
                 for block in combo:
                     current_pool.remove(block)
             else:
@@ -203,17 +236,38 @@ if st.button("Calculate Combinations", type="primary"):
                 st.error(f"❌ Could not find a valid combination for Set {i + 1} using the available blocks.")
                 break
                 
-    # Display Results
     if not failed:
         st.success("✅ Combinations calculated successfully!")
         
+        # Display Results
         for idx, combo in enumerate(results):
             st.subheader(f"Set {idx + 1}")
             
-            # Format the output clearly
             combo_str = " + ".join([f"{b:.3f}" for b in combo])
             st.code(f"Blocks: {combo_str}\nTotal: {sum(combo):.3f} mm", language="text")
             
             for block in sorted(combo):
                 st.markdown(f"- `{block:.3f} mm`")
             st.markdown("---")
+            
+        # Display Export Buttons
+        st.subheader("Export Results")
+        ex_col1, ex_col2 = st.columns(2)
+        
+        with ex_col1:
+            csv_file = generate_csv(target_size, results)
+            st.download_button(
+                label="📄 Download as CSV",
+                data=csv_file,
+                file_name=f"Gauge_Setup_{target_size:.3f}mm.csv",
+                mime="text/csv"
+            )
+            
+        with ex_col2:
+            pdf_file = generate_pdf(target_size, results, selected_set)
+            st.download_button(
+                label="📥 Download as PDF",
+                data=pdf_file,
+                file_name=f"Gauge_Setup_{target_size:.3f}mm.pdf",
+                mime="application/pdf"
+            )
